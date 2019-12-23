@@ -2,7 +2,6 @@
 import json
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
 from subprocess import PIPE, Popen
 
@@ -51,6 +50,13 @@ def get_arguments():
                         required=False,
                         help='A file with Shodan export in JSON format. '
                              'JSON entries must be separated with a new-line character.')
+    parser.add_argument('--devices-file',
+                        dest='devices_file',
+                        default=DEFAULT_DEVICES_FILE,
+                        required=False,
+                        help='A new-line separated txt file with stored IP addresses of connected android devices to '
+                             'add them to the tool\'s context, '
+                             'in the following format: IP_ADDRESS:PORT.')
     parser.add_argument('-x',
                         '--execute',
                         dest='execute',
@@ -60,13 +66,6 @@ def get_arguments():
                         action='store_true',
                         required=False,
                         help='Capture a screenshot from the compromised android device(s).')
-    parser.add_argument('--devices-file',
-                        dest='devices_file',
-                        default=DEFAULT_DEVICES_FILE,
-                        required=False,
-                        help='A new-line separated txt file with stored IP addresses of connected android devices to '
-                             'add them to the tool\'s context, '
-                             'in the following format: IP_ADDRESS:PORT.')
     parser.add_argument('-l',
                         '--logging',
                         dest='logging',
