@@ -70,6 +70,7 @@ def get_arguments():
     parser.add_argument('-l',
                         '--logging',
                         dest='logging',
+                        default='INFO',
                         required=False,
                         help='Logging level. Default is INFO')
     options = parser.parse_args()
@@ -107,10 +108,11 @@ class AndroidDevice:
                        stdout=PIPE,
                        stderr=PIPE) as process:
                 stdout, stderr = process.communicate()
-                if stdout and 'connected' in str(stdout):
-                    logging.debug('Connected to %s:%s', self.ip_address, self.port)
-                    self.is_connected = True
-                    store_connected_device(self.ip_address, self.port, self.devices_file)
+                if stdout:
+                    if 'connected' in str(stdout):
+                        logging.debug('Connected to %s:%s', self.ip_address, self.port)
+                        self.is_connected = True
+                        store_connected_device(self.ip_address, self.port, self.devices_file)
                 if stderr:
                     if 'refused' in str(stderr).lower():
                         logging.debug('%s - connection refused', self.ip_address)
@@ -147,7 +149,8 @@ class AndroidDevice:
             screenshot_local_file_name = Path(
                         # _datetime.now():%d%m%y_%H%M
                         DEFAULT_SCREENSHOT_DIR) / f'{self.ip_address}.png'
-            with Popen(['adb', '-s', f'{self.ip_address}:{self.port}', 'pull', screenshot_remote_file_name,
+            with Popen(['adb', '-s', f'{self.ip_address}:{self.port}', 'pull',
+                        screenshot_remote_file_name,
                         screenshot_local_file_name],
                        stdout=PIPE, stderr=PIPE) as process:
                 stdout, stderr = process.communicate()
@@ -196,7 +199,8 @@ elif os.path.exists(connected_devices_file_name):
                                    port=port,
                                    devices_file=connected_devices_file_name)
             device.connect()
-            android_devices.append(device)
+            if device.is_connected:
+                android_devices.append(device)
 
 if android_devices:
     os.system("adb tcpip 5555")
@@ -211,7 +215,7 @@ if android_devices:
 
         if options.execute:
             command = options.execute
-            for device in connected_android_devices:
+            for i, device in enumerate(connected_android_devices):
                 logging.info('Executing %s on %s:%s [%s/%s]', command, device.ip_address, device.port, i,
                              len(connected_android_devices))
                 device.execute(command)
