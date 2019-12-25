@@ -181,9 +181,12 @@ elif options.shodan_file:
         try:
             for line in f.readlines():
                 dump = json.loads(line)
-                android_devices.append(AndroidDevice(ip_address=dump['ip_str'],
+                device = AndroidDevice(ip_address=dump['ip_str'],
                                                      port=dump['port'],
-                                                     devices_file=connected_devices_file_name))
+                                                     devices_file=connected_devices_file_name)
+                device.connect()
+                if device.is_connected:
+                    android_devices.append(device)
         except Exception as e:
             logging.error(e)
 elif os.path.exists(connected_devices_file_name):
